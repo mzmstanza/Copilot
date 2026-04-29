@@ -1364,135 +1364,69 @@ async function analyzeJD(){
   if(!S.cv||S.cv.length<40){showToast('Complete your profile first');goto('profile');return;}
   const title=document.getElementById('jd-title').value.trim();
   const company=document.getElementById('jd-company').value.trim();
-  const jdTxt=document.getElementById('jd-text').value.trim().replace(/\[Paste the full[\s\S]*?\]/g,'').trim();
+  const jdTxt=document.getElementById('jd-text').value.trim();
   const jdUrl=document.getElementById('jd-url').value.trim();
   if(!title||!company){showToast('Enter job title and company');return;}
   S.jd={...S.jd,title,company,text:jdTxt,url:jdUrl,cvText:'',coverText:'',emailTo:'',emailSub:'',emailBody:'',contacts:[],linkedinMsg:'',analysis:null};
   const btn=document.getElementById('jd-btn');btn.disabled=true;
   const ld=document.getElementById('jd-loading'),lTxt=document.getElementById('jd-loading-txt');
   ld.style.display='flex';document.getElementById('jd-result').style.display='none';
-  const p=S.profileData||{},cv=S.cv.substring(0,800);
+  const p=S.profileData||{},cv=S.cv.substring(0,600);
+  const jd=jdTxt?jdTxt.substring(0,400):'(use general knowledge for this role)';
   try{
-    // 1. Gap Analysis
-    lTxt.textContent='Analyzing fit (1/5)...';
-    const gRes=await claude('You are a talent analyst. Return only valid JSON, no markdown.',
-      `Compare candidate to job. Return JSON:
-{"fit_score":75,"verdict":"Strong match","summary":"2-sentence honest assessment","matches":["req met"],"gaps":["req missing"],"partial":["req partial"],"strategy":"2-sentence positioning advice"}
-CV:${cv}\nSkills:${(p.topSkills||[]).join(', ')}\nJob:${title} at ${company}\nJD:${jdTxt||'(use general knowledge of this role)'}`,'gap-analysis');
-    const gap=parseJSON(gRes,{fit_score:70,verdict:'Analyzed',summary:gRes,matches:[],gaps:[],partial:[],strategy:''});
-    S.jd.analysis=gap;renderGapAnalysis(gap);
+    // ── CALL 1: Analysis + CV + Cover Letter ──
+    lTxt.textContent='Analyzing fit & tailoring materials (1/2)...';
+    const res1=await claude(
+      'You are an expert career coach and talent analyst. Return only valid JSON, no markdown.',
+      'Analyze this candidate for the role and generate materials.\n\nCANDIDATE:\nName: '+(p.name||'Candidate')+'\nCV: '+cv+'\nSkills: '+(p.topSkills||[]).join(', ')+'\nGoals: '+(S.goals||'')+'\n\nROLE: '+title+' at '+company+'\nJD: '+jd+'\n\nReturn this exact JSON structure:\n{\n"fit_score": 78,\n"verdict": "Strong match",\n"summary": "2 sentence honest assessment",\n"matches": ["strength 1","strength 2","strength 3"],\n"gaps": ["gap 1","gap 2"],\n"partial": ["partial 1"],\n"strategy": "2 sentence positioning advice",\n"cv": "Full rewritten CV text. Keep all original bullets, add 1-2 new ones per role marked with ★. Rewrite summary for this role. End with:\\n── TAILORING NOTES ──\\n• change1\\n• change2",\n"cover": "Full cover letter ~250 words. Date, greeting, 3 paragraphs, sign-off. Specific to '+company+' and '+title+'. No placeholder brackets."}',
+      2500,'jd-1'
+    );
+    const d1=parseJSON(res1,{});
+    if(!d1.fit_score)throw new Error('Analysis failed — try again');
+    // Store analysis
+    S.jd.analysis=d1;
+    renderGapAnalysis(d1);
+    // Store CV
+    S.jd.cvText=d1.cv||'';
+    document.getElementById('cv-preview').innerHTML=cvHTML(d1.cv||'');
+    // Store cover letter
+    S.jd.coverText=d1.cover||'';
+    document.getElementById('cover-preview').textContent=d1.cover||'';
 
-    // 2. Tailored CV
-    await sleep(8000);lTxt.textContent='Tailoring CV (2/5)...';
-    const cvTxt=await claude('Expert career coach. Rewrite CV for this role. Be specific, no placeholders.',
-      `Rewrite CV for "${title}" at ${company}.
-CV:${cv}
-JD:${jdTxt?jdTxt.substring(0,300):'N/A'}
-Gaps:${(gap.gaps||[]).join(', ')}\nStrategy:${gap.strategy||''}
-Rules:1.Rewrite summary(3 sentences targeting this role) 2.Keep ALL bullets,ADD 1-2 new ones per role marked★ 3.Reorder skills for this role 4.End with:── TAILORING NOTES ──\n• Change1:[what/why]\n• Change2:[what/why]\n• Change3:[what/why]
-Output plain text only.`,'cv-tailor');
-    S.jd.cvText=cvTxt;document.getElementById('cv-preview').innerHTML=cvHTML(cvTxt);
-
-    // 3. Cover Letter
-    await sleep(8000);lTxt.textContent='Writing cover letter (3/5)...';
-    const covTxt=await claude('Expert career coach. Specific cover letter, no brackets, no placeholder text.',
-      `Cover letter for ${p.name||'candidate'} applying to ${title} at ${company}.
-Background:${cv.substring(0,400)}\nGoals:${S.goals||'not specified'}\nStrategy:${gap.strategy||''}\nJD:${jdTxt?jdTxt.substring(0,300):'use general knowledge'}
-Format: date, greeting, 3 paragraphs, sign-off. ~280 words. P1:why this co+role. P2:one metric achievement proving fit. P3:why ready now+CTA.`,'cover');
-    S.jd.coverText=covTxt;document.getElementById('cover-preview').textContent=covTxt;
-
-    // 4. Cold Email
-    await sleep(8000);lTxt.textContent='Drafting cold email (4/5)...';
-    const emailTxt=await claude('Expert career coach. Punchy cold email.',
-      `Cold email from ${p.name||'candidate'} to recruiter at ${company} for ${title}.
-Background:${cv.substring(0,400)}
-ONLY output:
-SUBJECT:[under 55 chars]
-TO:recruiting@${company.toLowerCase().replace(/[^a-z0-9]/g,'')}.com
----
-[3 paras ~120 words. P1:who+why ${company}. P2:one metric achievement. P3:ask 15min call]
-Best,\n${p.name||'[Name]'}`,'email');
-    const subM=emailTxt.match(/SUBJECT:\s*(.+)/i),toM=emailTxt.match(/TO:\s*(.+)/i),bIdx=emailTxt.indexOf('---');
-    S.jd.emailTo=toM?toM[1].trim():`recruiting@${company.toLowerCase().replace(/[^a-z0-9]/g,'')}.com`;
-    S.jd.emailSub=subM?subM[1].trim():`${title} — ${p.name||'Application'}`;
-    S.jd.emailBody=bIdx>-1?emailTxt.substring(bIdx+3).trim():emailTxt;
+    // ── CALL 2: Email + LinkedIn contacts ──
+    lTxt.textContent='Drafting outreach materials (2/2)...';
+    await sleep(3000);
+    const res2=await claude(
+      'You are an expert career coach. Return only valid JSON, no markdown.',
+      'Generate outreach materials for this candidate.\n\nCANDIDATE: '+(p.name||'Candidate')+'\nBackground: '+cv.substring(0,300)+'\n\nAPPLYING TO: '+title+' at '+company+'\n\nReturn this exact JSON:\n{\n"email_to": "recruiting@'+company.toLowerCase().replace(/[^a-z0-9]/g,'')+'.com",\n"email_subject": "short subject under 55 chars",\n"email_body": "cold email ~120 words. 3 paragraphs: who I am + why '+company+', one metric achievement, ask for 15min call. Sign off with '+(p.name||'[Name]')+'.",\n"contacts": [{"name":"realistic full name","title":"title at '+company+'","why":"one sentence","search":"linkedin search keywords"},{"name":"name2","title":"title2","why":"why2","search":"search2"},{"name":"name3","title":"title3","why":"why3","search":"search3"}],\n"linkedin_msg": "LinkedIn connection request max 280 chars. Mention '+company+' and '+title+'. Professional, no emojis."}',
+      1500,'jd-2'
+    );
+    const d2=parseJSON(res2,{});
+    // Store email
+    S.jd.emailTo=d2.email_to||('recruiting@'+company.toLowerCase().replace(/[^a-z0-9]/g,'')+'.com');
+    S.jd.emailSub=d2.email_subject||title+' — '+p.name;
+    S.jd.emailBody=d2.email_body||'';
     document.getElementById('email-to').value=S.jd.emailTo;
     document.getElementById('email-sub').value=S.jd.emailSub;
     document.getElementById('email-body').value=S.jd.emailBody;
+    // Store contacts
+    S.jd.contacts=d2.contacts||[];
+    S.jd.linkedinMsg=d2.linkedin_msg||'';
+    renderContacts();
+    document.getElementById('linkedin-msg').textContent=S.jd.linkedinMsg;
 
-    // 5. LinkedIn contacts
-    await sleep(8000);lTxt.textContent='Finding LinkedIn contacts (5/5)...';
-    const ctTxt=await claude('Recruiting researcher. Suggest realistic contacts.',
-      `${p.name||'Candidate'} applying to ${title} at ${company}. Skills:${(p.topSkills||[]).join(', ')}.
-List 4 contacts (recruiter, hiring manager, peer, senior leader). For EACH:
-NAME:[realistic full name]
-TITLE:[realistic title at ${company}]
-WHY:[one sentence why contact them]
-SEARCH:[LinkedIn search keywords]
----
-MESSAGE:
-[LinkedIn connection request: max 280 chars, reference ${company} specifically, natural tone, no emojis]`,'contacts');
-    const blocks=ctTxt.split(/\n---+\n/).filter(b=>b.includes('NAME:'));
-    S.jd.contacts=blocks.map(b=>({name:(b.match(/NAME:\s*(.+)/i)||[])[1]?.trim()||'',title:(b.match(/TITLE:\s*(.+)/i)||[])[1]?.trim()||'',why:(b.match(/WHY:\s*(.+)/i)||[])[1]?.trim()||'',search:(b.match(/SEARCH:\s*(.+)/i)||[])[1]?.trim()||''})).filter(c=>c.name);
-    const msgM=ctTxt.match(/MESSAGE:\s*([\s\S]+)$/i);
-    S.jd.linkedinMsg=msgM?msgM[1].trim():`Hi, I'm exploring the ${title} role at ${company} and would love to connect.`;
-    renderContacts();document.getElementById('linkedin-msg').textContent=S.jd.linkedinMsg;
-
-    ld.style.display='none';document.getElementById('jd-result').style.display='block';
-    await save();showToast('All materials generated ✓');
+    ld.style.display='none';
+    document.getElementById('jd-result').style.display='block';
+    await save();
+    showToast('All materials generated ✓');
   }catch(e){
-    ld.style.display='none';document.getElementById('jd-result').style.display='block';
-    document.getElementById('cv-preview').innerHTML=`<div style="color:var(--red);padding:20px;font-size:13px"><strong>Error:</strong> ${esc(e.message)}<br><br>Please try again.</div>`;
+    ld.style.display='none';
+    document.getElementById('jd-result').style.display='block';
+    document.getElementById('cv-preview').innerHTML='<div style="color:var(--red);padding:20px;font-size:13px"><strong>Error:</strong> '+esc(e.message)+'<br><br>Please try again.</div>';
   }finally{btn.disabled=false;}
 }
 
-function renderGapAnalysis(gap){
-  const sc=Math.min(100,Math.max(0,gap.fit_score||70));
-  const arc=document.getElementById('score-arc');
-  arc.style.strokeDashoffset=213.6*(1-sc/100);
-  arc.style.stroke=sc>=78?'#1e5c2e':sc>=60?'#c9a84c':'#7a1a1a';
-  const sn=document.getElementById('score-num');
-  sn.textContent=sc+'%';sn.style.color=sc>=78?'var(--green)':sc>=60?'var(--gold-d)':'var(--red)';
-  document.getElementById('score-verdict').textContent=gap.verdict||'';
-  document.getElementById('jd-summary').textContent=(gap.summary||'')+(gap.strategy?' '+gap.strategy:'');
-  document.getElementById('gap-grid').innerHTML=`
-    <div class="gap-col match"><div style="font-size:11px;font-weight:700;color:var(--green);margin-bottom:8px">✓ STRONG MATCHES</div>${(gap.matches||[]).map(i=>`<div class="gap-item"><span>✅</span><span>${esc(i)}</span></div>`).join('')}</div>
-    <div>
-      <div class="gap-col partial" style="margin-bottom:10px"><div style="font-size:11px;font-weight:700;color:var(--orange);margin-bottom:8px">◑ PARTIAL MATCHES</div>${(gap.partial||[]).map(i=>`<div class="gap-item"><span>🟡</span><span>${esc(i)}</span></div>`).join('')}</div>
-      <div class="gap-col miss"><div style="font-size:11px;font-weight:700;color:var(--red);margin-bottom:8px">✗ GAPS TO ADDRESS</div>${(gap.gaps||[]).map(i=>`<div class="gap-item"><span>🔴</span><span>${esc(i)}</span></div>`).join('')}</div>
-    </div>`;
-}
-function renderContacts(){
-  const colors=[['#e8f0f8','#1a4a7a'],['#e8f4eb','#1e5c2e'],['#f5edda','#a8872e'],['#f0e8f8','#4a1a7a']];
-  document.getElementById('contacts-list').innerHTML=(S.jd.contacts||[]).map((c,i)=>{
-    const [bg,fg]=colors[i%4],init=c.name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
-    const url=`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(c.search||c.name+' '+S.jd.company)}`;
-    return`<div class="contact-card">
-      <div class="c-av" style="background:${bg};color:${fg}">${init}</div>
-      <div class="c-info"><div class="c-name">${esc(c.name)}</div><div class="c-role">${esc(c.title)}</div><div class="c-why">${esc(c.why)}</div></div>
-      <div class="c-acts">
-        <a href="${url}" target="_blank" rel="noopener" class="btn btn-outline btn-sm" style="font-size:11px">Find on LinkedIn ↗</a>
-        <button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="copyMsg()">Copy message</button>
-      </div>
-    </div>`;
-  }).join('');
-}
-function cvHTML(text){
-  if(!text)return'';
-  const parts=text.split(/──\s*TAILORING NOTES\s*──/i);
-  const body=parts[0].trim(),notes=parts[1]?.trim()||'';
-  let html='';
-  body.split('\n').forEach(line=>{
-    const t=line.trim();
-    if(!t){html+='<div style="height:4px"></div>';return;}
-    if(t.startsWith('★')){html+=`<div class="cv-bul"><span class="hl-new">${esc(t.replace(/^★\s*/,''))}</span></div>`;return;}
-    if(/^[A-Z][A-Z\s&\/\-,()]+$/.test(t)&&t.length<50){html+=`<div class="cv-sec">${esc(t)}</div>`;return;}
-    if(t.startsWith('- ')||t.startsWith('• ')){html+=`<div class="cv-bul">${esc(t.replace(/^[-•]\s*/,''))}</div>`;return;}
-    html+=`<div style="font-size:12px;margin-bottom:1px;color:#1a1a1a;line-height:1.5">${esc(t)}</div>`;
-  });
-  if(notes)html+=`<div style="margin-top:14px;padding:10px 12px;background:#fff3cd;border-radius:6px;font-size:11px;color:#856404;line-height:1.6"><strong>Tailoring notes:</strong><br>${esc(notes)}<br><span style="opacity:.7">★ = new bullets added for this role</span></div>`;
-  return html;
-}
+
 async function applyFb(type){
   const fbMap={cv:'cv-fb',cover:'cover-fb',email:'email-fb',linkedin:'linkedin-fb'};
   const fbEl=document.getElementById(fbMap[type]);
