@@ -1320,54 +1320,44 @@ async function analyzeJD(){
   const btn=document.getElementById('jd-btn');btn.disabled=true;
   const ld=document.getElementById('jd-loading'),lTxt=document.getElementById('jd-loading-txt');
   ld.style.display='flex';document.getElementById('jd-result').style.display='none';
-  const p=S.profileData||{},cv=S.cv.substring(0,400);
-  const jd=jdTxt?jdTxt.substring(0,400):'(use general knowledge for this role)';
+  const p=S.profileData||{};
+  const cv=S.cv.substring(0,200);
+  const jd=jdTxt.substring(0,150);
+  const name=p.name||'Candidate';
+  const co=company.toLowerCase().replace(/[^a-z0-9]/g,'');
   try{
-    // ── CALL 1: Analysis + CV + Cover Letter ──
-    lTxt.textContent='Analyzing fit & tailoring materials (1/2)...';
-    const res1=await claude(
-      'You are an expert career coach and talent analyst. Return only valid JSON, no markdown.',
-      'Analyze this candidate for the role and generate materials.\n\nCANDIDATE:\nName: '+(p.name||'Candidate')+'\nCV: '+cv+'\nSkills: '+(p.topSkills||[]).join(', ')+'\nGoals: '+(S.goals||'')+'\n\nROLE: '+title+' at '+company+'\nJD: '+jd+'\n\nReturn this exact JSON structure:\n{\n"fit_score": 78,\n"verdict": "Strong match",\n"summary": "2 sentence honest assessment",\n"matches": ["strength 1","strength 2","strength 3"],\n"gaps": ["gap 1","gap 2"],\n"partial": ["partial 1"],\n"strategy": "2 sentence positioning advice",\n"cv": "Full rewritten CV text. Keep all original bullets, add 1-2 new ones per role marked with ★. Rewrite summary for this role. End with:\\n── TAILORING NOTES ──\\n• change1\\n• change2",\n"cover": "Full cover letter ~250 words. Date, greeting, 3 paragraphs, sign-off. Specific to '+company+' and '+title+'. No placeholder brackets."}',
-      1800,'jd-1'
-    );
-    const d1=parseJSON(res1,{});
+    lTxt.textContent='Analyzing fit (1/2)...';
+    const r1=await claude('Career coach. JSON only.',
+      'Role:'+title+' at '+company+'\nCV:'+cv+'\nJD:'+jd+'\nReturn:{fit_score:75,verdict:"ok",summary:"2 sentences",matches:["m1"],gaps:["g1"],partial:["p1"],strategy:"advice",cv:"rewritten CV with stars",cover:"cover letter 200 words"}',
+      1200,'jd-1');
+    const d1=parseJSON(r1,{});
     if(!d1.fit_score)throw new Error('Analysis failed — try again');
-    // Store analysis
     S.jd.analysis=d1;
     renderGapAnalysis(d1);
-    // Store CV
     S.jd.cvText=d1.cv||'';
     document.getElementById('cv-preview').innerHTML=cvHTML(d1.cv||'');
-    // Store cover letter
     S.jd.coverText=d1.cover||'';
     document.getElementById('cover-preview').textContent=d1.cover||'';
-
-    // ── CALL 2: Email + LinkedIn contacts ──
-    lTxt.textContent='Drafting outreach materials (2/2)...';
-    await sleep(3000);
-    const res2=await claude(
-      'You are an expert career coach. Return only valid JSON, no markdown.',
-      'Generate outreach materials for this candidate.\n\nCANDIDATE: '+(p.name||'Candidate')+'\nBackground: '+cv.substring(0,200)+'\n\nAPPLYING TO: '+title+' at '+company+'\n\nReturn this exact JSON:\n{\n"email_to": "recruiting@'+company.toLowerCase().replace(/[^a-z0-9]/g,'')+'.com",\n"email_subject": "short subject under 55 chars",\n"email_body": "cold email ~120 words. 3 paragraphs: who I am + why '+company+', one metric achievement, ask for 15min call. Sign off with '+(p.name||'[Name]')+'.",\n"contacts": [{"name":"realistic full name","title":"title at '+company+'","why":"one sentence","search":"linkedin search keywords"},{"name":"name2","title":"title2","why":"why2","search":"search2"},{"name":"name3","title":"title3","why":"why3","search":"search3"}],\n"linkedin_msg": "LinkedIn connection request max 280 chars. Mention '+company+' and '+title+'. Professional, no emojis."}',
-      1000,'jd-2'
-    );
-    const d2=parseJSON(res2,{});
-    // Store email
-    S.jd.emailTo=d2.email_to||('recruiting@'+company.toLowerCase().replace(/[^a-z0-9]/g,'')+'.com');
-    S.jd.emailSub=d2.email_subject||title+' — '+p.name;
+    lTxt.textContent='Waiting to avoid rate limit (35s)...';
+    await sleep(35000);
+    lTxt.textContent='Generating outreach (2/2)...';
+    const r2=await claude('Career coach. JSON only.',
+      'Outreach for '+name+' -> '+title+' at '+company+'\nReturn:{email_to:"hr@'+co+'.com",email_subject:"subject",email_body:"100 word cold email",contacts:[{name:"n",title:"t",why:"w",search:"s"},{name:"n2",title:"t2",why:"w2",search:"s2"}],linkedin_msg:"200 char message"}',
+      700,'jd-2');
+    const d2=parseJSON(r2,{});
+    S.jd.emailTo=d2.email_to||('hr@'+co+'.com');
+    S.jd.emailSub=d2.email_subject||title;
     S.jd.emailBody=d2.email_body||'';
     document.getElementById('email-to').value=S.jd.emailTo;
     document.getElementById('email-sub').value=S.jd.emailSub;
     document.getElementById('email-body').value=S.jd.emailBody;
-    // Store contacts
     S.jd.contacts=d2.contacts||[];
     S.jd.linkedinMsg=d2.linkedin_msg||'';
     renderContacts();
     document.getElementById('linkedin-msg').textContent=S.jd.linkedinMsg;
-
     ld.style.display='none';
     document.getElementById('jd-result').style.display='block';
-    await save();
-    showToast('All materials generated ✓');
+    await save();showToast('All materials generated ✓');
   }catch(e){
     ld.style.display='none';
     document.getElementById('jd-result').style.display='block';
