@@ -1266,135 +1266,99 @@ async function analyzeJD(){
   const ld = document.getElementById('jd-loading');
   ld.style.display='block';
   document.getElementById('jd-result').style.display='none';
-  // Reset steps
   ['step-analyze','step-cv','step-cover','step-email','step-contacts'].forEach(s=>setStep(s,''));
   setStep('step-analyze','active');
 
   const p = S.profileData||{};
-  const cvSnippet = S.cv.substring(0,1200);
-  const jdSnippet = jdTxt.substring(0,800);
+  // Keep snippets SHORT to stay well under 50K tokens/min
+  const cvSnippet = S.cv.substring(0,600);
+  const jdSnippet = jdTxt.substring(0,500);
   const name = p.name||'Candidate';
-  const skills = (p.topSkills||[]).join(', ');
+  const skills = (p.topSkills||[]).slice(0,6).join(', ');
   const co = company.toLowerCase().replace(/[^a-z0-9]/g,'');
+  const titleLast = title.split(' ').pop();
 
   try{
-    // ── SINGLE CALL: everything in one JSON response ──
-    // This eliminates all delays and uses only ~2500 tokens total
-    document.getElementById('jd-loading-txt').textContent = 'Analyzing fit and generating all materials...';
+    // ── CALL 1: Analysis + Cover + Email + Outreach (~1200 input tokens) ──
+    document.getElementById('jd-loading-txt').textContent = 'Analyzing fit...';
+    const prompt1 =
+`Career coach. Candidate: ${name}, Skills: ${skills}, Stage: ${p.career_stage||'mid-level'}.
+Job: ${title} at ${company}. JD: ${jdSnippet}
+CV: ${cvSnippet}
+Return JSON only:
+{"analysis":{"fit_score":78,"verdict":"Strong match","summary":"2 sentences","strategy":"2 sentences","matches":["m1","m2","m3"],"partial":["p1"],"gaps":["g1"]},"cover":"~150 word cover letter. Dear Hiring Team at ${company},\\n\\n[body]\\n\\nSincerely,\\n${name}","email":{"to":"hr@${co}.com","subject":"${title} — ${name}","body":"80-word cold email"},"outreach":{"targets":[{"role":"Hiring Manager","why":"Approves this hire","search":"Hiring Manager ${company} ${titleLast}"},{"role":"Recruiter","why":"Owns the pipeline","search":"Recruiter ${company}"},{"role":"${titleLast}","why":"Peer insight","search":"${titleLast} ${company}"}],"boolean_search":"\"${company}\" (\"recruiter\" OR \"talent\") \"${titleLast}\" site:linkedin.com","connection_message":"Hi [Name], I saw the ${title} role at ${company} and your profile stood out. My background in ${(p.topSkills||['this area'])[0]} aligns well — would you be open to a quick chat?"}}`;
 
-    const prompt =
-`You are an expert career coach. Analyze this job application and return ONE valid JSON object with ALL sections.
-
-CANDIDATE: ${name}
-SKILLS: ${skills}
-CAREER STAGE: ${p.career_stage||''}
-CV (excerpt): ${cvSnippet}
-
-JOB: ${title} at ${company}
-JD: ${jdSnippet}
-
-Return this exact JSON structure (no markdown, no extra text):
-{
-  "analysis": {
-    "fit_score": 78,
-    "verdict": "Strong match",
-    "summary": "2 sentence assessment of fit",
-    "strategy": "2 sentence tailoring advice",
-    "matches": ["strength 1","strength 2","strength 3"],
-    "partial": ["partial match 1"],
-    "gaps": ["gap 1"]
-  },
-  "cv": "Full tailored CV text. Keep all original bullets. Add 1-2 new bullets per role marked with ★. Use ALL CAPS for section headers. Use - for bullets.",
-  "cover": "Cover letter ~180 words. Dear Hiring Team at ${company}, ... Sincerely, ${name}",
-  "email": {
-    "to": "hr@${co}.com",
-    "subject": "${title} Application — ${name}",
-    "body": "100-word professional cold email body"
-  },
-  "outreach": {
-    "targets": [
-      {"role":"Head of Product","why":"Decision maker for this role","search":"Head of Product ${company}"},
-      {"role":"Recruiter / Talent Acquisition","why":"Manages the hiring pipeline","search":"Recruiter ${company}"},
-      {"role":"${title.split(' ').slice(-1)[0]} team member","why":"Peer-level insight into team culture","search":"${title.split(' ').slice(-1)[0]} ${company}"}
-    ],
-    "boolean_search": "(\"${company}\") AND (\"recruiter\" OR \"talent acquisition\" OR \"hiring manager\") AND (\"${title.split(' ').slice(-2).join(' ')}\") site:linkedin.com",
-    "connection_message": "Hi [Name], I came across the ${title} role at ${company} and your profile stood out. I have a background in ${(p.topSkills||['this area'])[0]} and would love to learn more about the team. Would you be open to a quick chat? Thanks!"
-  }
-}`;
-
-    const raw = await claude(
-      'Expert career coach. Return only valid JSON, no markdown, no extra text outside the JSON object.',
-      prompt,
-      2800, 'jd-all'
+    const raw1 = await claude(
+      'Return only valid compact JSON. No markdown, no prose outside the JSON.',
+      prompt1, 1400, 'jd-1'
     );
 
     setStep('step-analyze','done'); setStep('step-cv','active');
+    document.getElementById('jd-loading-txt').textContent = 'Tailoring your CV...';
 
-    // Parse the single response
-    const d = parseJSON(raw, null);
+    const d1 = parseJSON(raw1, {});
 
-    if(!d){
-      // Fallback: try to extract what we can from plain text
-      throw new Error('Could not parse response. Please try again.');
-    }
-
-    // ── Gap Analysis ──
-    const analysis = d.analysis||{fit_score:70, verdict:'Analyzed', summary:raw, matches:[], gaps:[], partial:[], strategy:''};
+    // Populate analysis immediately so user sees progress
+    const analysis = d1.analysis||{fit_score:70,verdict:'Analyzed',summary:'',strategy:'',matches:[],partial:[],gaps:[]};
     S.jd.analysis = analysis;
     renderGapAnalysis(analysis);
-    setStep('step-cv','done'); setStep('step-cover','active');
 
-    // ── CV ──
-    // Robust extraction: try d.cv first, then fallback patterns
-    let cvText = '';
-    if(d.cv && typeof d.cv==='string' && d.cv.trim().length>50){
-      cvText = d.cv.trim();
-    } else {
-      // Try to find CV section in raw text
-      const cvMatch = raw.match(/"cv"\s*:\s*"([\s\S]+?)(?:"\s*,\s*"cover"|"\s*})/);
-      if(cvMatch) cvText = cvMatch[1].replace(/\\n/g,'\n').replace(/\\"/g,'"').trim();
-    }
-    if(!cvText) cvText = `${name}\n\n${cvSnippet}\n\n★ Tailored for ${title} at ${company}`;
-    S.jd.cvText = cvText;
-    document.getElementById('cv-preview').innerHTML = cvHTML(cvText);
-    setStep('step-cover','done'); setStep('step-email','active');
-
-    // ── Cover Letter ──
+    // Cover letter
     let coverText = '';
-    if(d.cover && typeof d.cover==='string' && d.cover.trim().length>50){
-      coverText = d.cover.trim();
-    } else {
-      const coverMatch = raw.match(/"cover"\s*:\s*"([\s\S]+?)(?:"\s*,\s*"email"|"\s*})/);
-      if(coverMatch) coverText = coverMatch[1].replace(/\\n/g,'\n').replace(/\\"/g,'"').trim();
-    }
+    if(d1.cover && d1.cover.length>30) coverText = d1.cover.replace(/\\n/g,'\n');
     if(!coverText) coverText = `Dear Hiring Team at ${company},\n\nI am writing to express my strong interest in the ${title} position. With my background in ${skills||'this field'}, I am confident I can contribute meaningfully to your team.\n\n${analysis.strategy||''}\n\nThank you for your consideration.\n\nSincerely,\n${name}`;
     S.jd.coverText = coverText;
     document.getElementById('cover-preview').textContent = coverText;
-    setStep('step-email','done'); setStep('step-contacts','active');
 
-    // ── Cold Email ──
-    const emailData = d.email||{};
-    S.jd.emailTo = emailData.to||`hr@${co}.com`;
-    S.jd.emailSub = emailData.subject||`${title} Application`;
-    S.jd.emailBody = emailData.body||`Hi,\n\nI'm ${name}, and I'm excited to apply for the ${title} role at ${company}. My background in ${(p.topSkills||['this area'])[0]} aligns well with what you're looking for.\n\nI'd love to connect and learn more.\n\nBest,\n${name}`;
+    // Cold email
+    const em = d1.email||{};
+    S.jd.emailTo = em.to||`hr@${co}.com`;
+    S.jd.emailSub = em.subject||`${title} Application — ${name}`;
+    S.jd.emailBody = (em.body||'').replace(/\\n/g,'\n')||`Hi,\n\nI'm ${name}, excited to apply for the ${title} role at ${company}. My background in ${(p.topSkills||['this area'])[0]} aligns well with what you're looking for.\n\nBest,\n${name}`;
     document.getElementById('email-to').value = S.jd.emailTo;
     document.getElementById('email-sub').value = S.jd.emailSub;
     document.getElementById('email-body').value = S.jd.emailBody;
 
-    // ── LinkedIn Outreach Strategy ──
-    const outreach = d.outreach||{};
-    const targets = outreach.targets||[
-      {role:`Head of ${title.split(' ').pop()}`,why:'Decision maker for this role',search:`Head of ${title.split(' ').pop()} ${company}`},
-      {role:'Recruiter / Talent Acquisition',why:'Manages the hiring pipeline',search:`Recruiter ${company}`},
-      {role:'Team Member',why:'Peer-level insight into team culture',search:`${title} ${company}`}
+    // LinkedIn outreach
+    const out = d1.outreach||{};
+    const targets = out.targets||[
+      {role:'Hiring Manager',why:'Approves this hire',search:`Hiring Manager ${company} ${titleLast}`},
+      {role:'Recruiter',why:'Owns the pipeline',search:`Recruiter ${company}`},
+      {role:titleLast,why:'Peer insight',search:`${titleLast} ${company}`}
     ];
     S.jd.contacts = targets.map(t=>({name:t.role, title:t.role+' at '+company, why:t.why, search:t.search}));
-    S.jd.booleanSearch = outreach.boolean_search||`("${company}") AND ("recruiter" OR "hiring manager") AND ("${title}") site:linkedin.com`;
-    S.jd.linkedinMsg = outreach.connection_message||`Hi, I came across the ${title} role at ${company} and would love to connect. I have a background in ${(p.topSkills||['this area'])[0]} and am excited about what ${company} is building.`;
-
+    S.jd.booleanSearch = out.boolean_search||`"${company}" ("recruiter" OR "talent") "${titleLast}" site:linkedin.com`;
+    S.jd.linkedinMsg = (out.connection_message||'').replace(/\\n/g,'\n')||`Hi, I came across the ${title} role at ${company} and would love to connect. My background in ${(p.topSkills||['this area'])[0]} aligns well with what you're building.`;
     renderContacts();
     document.getElementById('linkedin-msg').textContent = S.jd.linkedinMsg;
-    setStep('step-contacts','done');
+    setStep('step-cover','done'); setStep('step-email','done'); setStep('step-contacts','done');
+
+    // ── Short pause between calls to respect rate limit ──
+    await sleep(4000);
+
+    // ── CALL 2: Tailored CV only (~1000 input tokens) ──
+    const prompt2 =
+`Career coach. Tailor this CV for: ${title} at ${company}.
+Key requirements: ${jdSnippet.substring(0,300)}
+CV to tailor:
+${cvSnippet}
+Rules: Keep ALL original content. Add 1-2 bullets per role marked ★ that align with the job. Use ALL CAPS section headers. Use - for bullets. Return ONLY the tailored CV text, no JSON, no explanation.`;
+
+    const raw2 = await claude(
+      'Return only the tailored CV text. No JSON, no markdown, no explanation.',
+      prompt2, 1200, 'jd-2'
+    );
+
+    setStep('step-cv','done');
+    let cvText = raw2.trim();
+    // Strip any accidental JSON wrapper
+    if(cvText.startsWith('{') || cvText.startsWith('"')){
+      const m = cvText.match(/"cv"\s*:\s*"([\s\S]+?)"\s*[,}]/);
+      if(m) cvText = m[1].replace(/\\n/g,'\n').replace(/\\"/g,'"');
+    }
+    if(!cvText || cvText.length < 50) cvText = `${name}\n\n${cvSnippet}\n\n★ Tailored for ${title} at ${company}`;
+    S.jd.cvText = cvText;
+    document.getElementById('cv-preview').innerHTML = cvHTML(cvText);
 
     ld.style.display='none';
     document.getElementById('jd-result').style.display='block';
@@ -1403,11 +1367,7 @@ Return this exact JSON structure (no markdown, no extra text):
 
   }catch(e){
     ld.style.display='none';
-    // Show partial results if we got any
-    if(S.jd.analysis){
-      document.getElementById('jd-result').style.display='block';
-    }
-    // Show error in CV tab
+    if(S.jd.analysis) document.getElementById('jd-result').style.display='block';
     const cvPrev = document.getElementById('cv-preview');
     if(cvPrev&&!S.jd.cvText){
       cvPrev.innerHTML = `<div class="error-box"><strong>Generation error</strong><p>${esc(e.message)}</p><p style="margin-top:8px"><button class="btn btn-gold btn-sm" onclick="analyzeJD()">Try again →</button></p></div>`;
