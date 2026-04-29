@@ -1352,6 +1352,7 @@ function moveApp(id,col){
 }
 
 // ── JD ANALYZER ──
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function analyzeJD(){
   if(!S.cv||S.cv.length<40){showToast('Complete your profile first');goto('profile');return;}
   const title=document.getElementById('jd-title').value.trim();
@@ -1363,7 +1364,7 @@ async function analyzeJD(){
   const btn=document.getElementById('jd-btn');btn.disabled=true;
   const ld=document.getElementById('jd-loading'),lTxt=document.getElementById('jd-loading-txt');
   ld.style.display='flex';document.getElementById('jd-result').style.display='none';
-  const p=S.profileData||{},cv=S.cv.substring(0,1400);
+  const p=S.profileData||{},cv=S.cv.substring(0,800);
   try{
     // 1. Gap Analysis
     lTxt.textContent='Analyzing fit (1/5)...';
@@ -1375,7 +1376,7 @@ CV:${cv}\nSkills:${(p.topSkills||[]).join(', ')}\nJob:${title} at ${company}\nJD
     S.jd.analysis=gap;renderGapAnalysis(gap);
 
     // 2. Tailored CV
-    lTxt.textContent='Tailoring CV (2/5)...';
+    await sleep(2000);lTxt.textContent='Tailoring CV (2/5)...';
     const cvTxt=await claude('Expert career coach. Never use placeholder brackets. Write from actual CV details.',
       `Rewrite CV for "${title}" at ${company}.
 CV:${cv}
@@ -1386,18 +1387,18 @@ Output plain text only.`,'cv-tailor');
     S.jd.cvText=cvTxt;document.getElementById('cv-preview').innerHTML=cvHTML(cvTxt);
 
     // 3. Cover Letter
-    lTxt.textContent='Writing cover letter (3/5)...';
+    await sleep(2000);lTxt.textContent='Writing cover letter (3/5)...';
     const covTxt=await claude('Expert career coach. Specific cover letter, no brackets, no placeholder text.',
       `Cover letter for ${p.name||'candidate'} applying to ${title} at ${company}.
-Background:${cv.substring(0,600)}\nGoals:${S.goals||'not specified'}\nStrategy:${gap.strategy||''}\nJD:${jdTxt?jdTxt.substring(0,500):'use general knowledge'}
+Background:${cv.substring(0,400)}\nGoals:${S.goals||'not specified'}\nStrategy:${gap.strategy||''}\nJD:${jdTxt?jdTxt.substring(0,500):'use general knowledge'}
 Format: date, greeting, 3 paragraphs, sign-off. ~280 words. P1:why this co+role. P2:one metric achievement proving fit. P3:why ready now+CTA.`,'cover');
     S.jd.coverText=covTxt;document.getElementById('cover-preview').textContent=covTxt;
 
     // 4. Cold Email
-    lTxt.textContent='Drafting cold email (4/5)...';
+    await sleep(2000);lTxt.textContent='Drafting cold email (4/5)...';
     const emailTxt=await claude('Expert career coach. Punchy cold email.',
       `Cold email from ${p.name||'candidate'} to recruiter at ${company} for ${title}.
-Background:${cv.substring(0,500)}
+Background:${cv.substring(0,400)}
 ONLY output:
 SUBJECT:[under 55 chars]
 TO:recruiting@${company.toLowerCase().replace(/[^a-z0-9]/g,'')}.com
@@ -1413,7 +1414,7 @@ Best,\n${p.name||'[Name]'}`,'email');
     document.getElementById('email-body').value=S.jd.emailBody;
 
     // 5. LinkedIn contacts
-    lTxt.textContent='Finding LinkedIn contacts (5/5)...';
+    await sleep(2000);lTxt.textContent='Finding LinkedIn contacts (5/5)...';
     const ctTxt=await claude('Recruiting researcher. Suggest realistic contacts.',
       `${p.name||'Candidate'} applying to ${title} at ${company}. Skills:${(p.topSkills||[]).join(', ')}.
 List 4 contacts (recruiter, hiring manager, peer, senior leader). For EACH:
