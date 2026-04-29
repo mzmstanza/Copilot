@@ -1112,7 +1112,7 @@ async function generateRoleIdeas(role,loc,stage,profile){
   const skills=(p.topSkills||[]).slice(0,4).join(', ');
   const locShort=loc.split('/')[0].trim().split(',')[0].trim();
   const prompt=[
-    'Generate 8 specific job opportunities posted in 2025-2026 that are currently open.',
+    'Find 8 specific job opportunities that are CURRENTLY OPEN in 2026. Only include roles posted in 2026, actively hiring right now.',
     '',
     'Profile:',
     '- Role: '+role,
@@ -1138,8 +1138,8 @@ async function generateRoleIdeas(role,loc,stage,profile){
   const res=await fetch(API,{
     method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({
-      model:MDL,max_tokens:1500,
-      system:'You are a recruiting specialist with deep knowledge of the 2025-2026 job market. Return only valid JSON arrays.',
+      model:MDL,max_tokens:1000,
+      system:'You are a recruiting specialist with deep knowledge of the 2026 job market. Return only valid JSON arrays.',
       messages:[{role:'user',content:prompt}]
     })
   });
@@ -1427,6 +1427,29 @@ async function analyzeJD(){
 }
 
 
+async function renderContacts(){
+  const colors=[['#e8f0f8','#1a4a7a'],['#e8f4eb','#1e5c2e'],['#f5edda','#a8872e'],['#f0e8f8','#4a1a7a']];
+  const el=document.getElementById('contacts-list');
+  if(!el)return;
+  el.innerHTML=(S.jd.contacts||[]).map((c,i)=>{
+    const [bg,fg]=colors[i%4];
+    const init=(c.name||'?').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+    const searchQ=encodeURIComponent((c.search||c.name+' '+S.jd.company).replace(/['"]/g,''));
+    const liUrl='https://www.linkedin.com/search/results/people/?keywords='+searchQ;
+    return '<div class="contact-card">'
+      +'<div class="c-av" style="background:'+bg+';color:'+fg+'">'+esc(init)+'</div>'
+      +'<div class="c-info">'
+        +'<div class="c-name">'+esc(c.name||'')+'</div>'
+        +'<div class="c-role">'+esc(c.title||'')+'</div>'
+        +'<div class="c-why">'+esc(c.why||'')+'</div>'
+      +'</div>'
+      +'<div class="c-acts">'
+        +'<a href="'+liUrl+'" target="_blank" rel="noopener" class="btn btn-outline btn-sm" style="font-size:11px">Search on LinkedIn ↗</a>'
+        +'<button class="btn btn-ghost btn-sm" style="font-size:11px" onclick="copyMsg()">Copy msg</button>'
+      +'</div>'
+    +'</div>';
+  }).join('');
+}
 async function applyFb(type){
   const fbMap={cv:'cv-fb',cover:'cover-fb',email:'email-fb',linkedin:'linkedin-fb'};
   const fbEl=document.getElementById(fbMap[type]);
