@@ -689,19 +689,24 @@ function parseDate(str){if(!str)return null;let d=new Date(str);if(!isNaN(d))ret
 // ── CLAUDE API ──
 async function claude(sys,usr,maxTk=2000,tag='?'){
   const clean=t=>String(t||'').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g,'');
-  const mt=parseInt(maxTk)||2000;  // ensure integer
-  const body={model:MDL,max_tokens:mt,system:clean(sys),messages:[{role:'user',content:clean(usr)}]};
+  const mt=parseInt(maxTk)||2000;
+  // Always route through backend (no browser restrictions)
+  const backendUrl=S.backendUrl||'https://web-production-d850.up.railway.app';
   let r,d;
   try{
-    r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    r=await fetch(backendUrl+'/claude',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({system:clean(sys),user:clean(usr),max_tokens:mt})
+    });
     d=await r.json();
   }catch(fetchErr){
     throw new Error('Network error: '+fetchErr.message);
   }
-  console.log('[Copilot API:'+tag+'] status='+r.status+' mt='+mt+' err='+(d.error?JSON.stringify(d.error):'none'));
-  if(d.content?.[0]?.text)return d.content[0].text;
-  const errMsg=d.error?.message||d.error?.type||JSON.stringify(d).substring(0,300);
-  throw new Error('API '+r.status+': '+errMsg);
+  console.log('[backend:'+tag+'] status='+r.status);
+  if(!r.ok){throw new Error(d.detail||d.error||'Backend error '+r.status);}
+  if(d.text)return d.text;
+  throw new Error('No text in response');
 }
 // FIX: robust JSON parser — greedy regex, not lazy
 function parseJSON(text,fallback=null){
