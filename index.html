@@ -1079,92 +1079,41 @@ function dedup(roles){
 }
 
 async function generateRoleIdeas(role,loc,stage,profile){
-  // If backend is configured, use it for REAL job listings via web_search
-  if(S.backendUrl){
-    try{
-      const bp=profile||{};
-      const resp=await fetch(S.backendUrl+'/search-jobs',{
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          role_type:role,
-          location:loc,
-          stage:stage||'',
-          skills:bp.topSkills||[],
-          career_stage:bp.career_stage||'',
-          name:bp.name||''
-        })
-      });
-      if(resp.ok){
-        const data=await resp.json();
-        const jobs=data.jobs||[];
-        if(jobs.length>0){
-          console.log('[backend] Got',jobs.length,'real listings');
-          return jobs.map(j=>({...j,isReal:true}));
-        }
-      }
-    }catch(e){
-      console.warn('[backend] Error, falling back to suggestions:',e.message);
-    }
-  }
-  // No backend or backend failed — generate suggestions with search links
+  // Use backend /search-jobs which has web_search — real results, no token waste
   const p=profile||{};
-  const skills=(p.topSkills||[]).slice(0,4).join(', ');
-  const locShort=loc.split('/')[0].trim().split(',')[0].trim();
-  const prompt=[
-    'Find 8 specific job opportunities that are CURRENTLY OPEN in 2026. Only include roles posted in 2026, actively hiring right now.',
-    '',
-    'Profile:',
-    '- Role: '+role,
-    '- Skills: '+skills,
-    '- Level: '+(p.career_stage||'experienced'),
-    '- Location: '+locShort,
-    '- Stage pref: '+(stage||'any'),
-    '',
-    'For each, give a real company name and a specific job title they realistically have open.',
-    'Return JSON array with these fields for each:',
-    'title (specific job title), company (real company name), location (city or Remote),',
-    'emoji (one relevant emoji), level (Entry/Mid/Senior/Director/VP),',
-    'fit_score (integer 65-95), reason (one sentence why good match),',
-    'snippet (one sentence about the role at this company)',
-    '',
-    'Use REAL companies: mix big tech (Google, Meta, Stripe, Airbnb, Spotify),',
-    'consulting (McKinsey, BCG, Bain), finance (Goldman, Blackstone),',
-    'and relevant growth startups. Vary locations. Be specific.',
-    '',
-    'Return ONLY the JSON array, no other text.'
-  ].join('\n');
-
-  const res=await fetch(API,{
-    method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({
-      model:MDL,max_tokens:1000,
-      system:'You are a recruiting specialist with deep knowledge of the 2026 job market. Return only valid JSON arrays.',
-      messages:[{role:'user',content:prompt}]
-    })
-  });
-  const d=await res.json();
-  if(d.error)throw new Error(d.error.message);
-  const raw=(d.content?.[0]?.text||'').trim();
-  const ideas=parseJSON(raw,[]);
-  if(!Array.isArray(ideas))return[];
-
-  return ideas.filter(j=>j.title&&j.company).map(j=>{
-    const co=j.company.toLowerCase().replace(/[^a-z0-9]/g,'');
-    const titleEnc=encodeURIComponent(j.title);
-    const locEnc=encodeURIComponent(locShort||'United States');
-    return {
-      ...j,
-      isSuggestion:true,
-      url:'https://www.linkedin.com/jobs/search/?keywords='+titleEnc+'&location='+locEnc,
-      links:{
-        linkedin:'https://www.linkedin.com/jobs/search/?keywords='+encodeURIComponent(j.title+' '+j.company)+'&location='+locEnc,
-        google:'https://www.google.com/search?q='+encodeURIComponent(j.title+' '+j.company+' jobs site:greenhouse.io OR site:lever.co OR site:ashbyhq.com'),
-        greenhouse:'https://boards.greenhouse.io/'+co
+  const backendUrl=S.backendUrl||'https://web-production-d850.up.railway.app';
+  try{
+    const resp=await fetch(backendUrl+'/search-jobs',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        role_type:role,
+        location:loc,
+        stage:stage||'',
+        skills:p.topSkills||[],
+        career_stage:p.career_stage||'',
+        name:p.name||''
+      })
+    });
+    if(resp.ok){
+      const data=await resp.json();
+      const jobs=data.jobs||[];
+      if(jobs.length>0){
+        console.log('[search] Got',jobs.length,'real listings from backend');
+        return jobs.map(j=>({...j,isReal:true}));
       }
-    };
-  });
+    }
+  }catch(e){console.warn('[search] backend error:',e.message);}
+  // Fallback: minimal claude call
+  const res=await claude(
+    'Recruiting specialist. Return only valid JSON array, no markdown.',
+    'List 6 companies hiring for '+role+' in '+loc+' in 2026. Return JSON array: [{"title":"job title","company":"company","location":"city or Remote","emoji":"emoji","level":"Senior","fit_score":80,"reason":"one reason","snippet":"one sentence","tags":["skill"]}]',
+    800,'roles-fallback'
+  );
+  const jobs=parseJSON(res,[]);
+  return Array.isArray(jobs)?jobs.filter(j=>j.title&&j.company).map(j=>({...j,isSuggestion:true,url:j.url||('https://www.google.com/search?q='+encodeURIComponent(j.title+' '+j.company+' jobs 2026'))})):[];
 }
+
 
 async function searchJobsWeb(roleType,location,stage,profile){
   return generateRoleIdeas(roleType,location,stage,profile);
@@ -1371,7 +1320,7 @@ async function analyzeJD(){
   const btn=document.getElementById('jd-btn');btn.disabled=true;
   const ld=document.getElementById('jd-loading'),lTxt=document.getElementById('jd-loading-txt');
   ld.style.display='flex';document.getElementById('jd-result').style.display='none';
-  const p=S.profileData||{},cv=S.cv.substring(0,600);
+  const p=S.profileData||{},cv=S.cv.substring(0,400);
   const jd=jdTxt?jdTxt.substring(0,400):'(use general knowledge for this role)';
   try{
     // ── CALL 1: Analysis + CV + Cover Letter ──
@@ -1379,7 +1328,7 @@ async function analyzeJD(){
     const res1=await claude(
       'You are an expert career coach and talent analyst. Return only valid JSON, no markdown.',
       'Analyze this candidate for the role and generate materials.\n\nCANDIDATE:\nName: '+(p.name||'Candidate')+'\nCV: '+cv+'\nSkills: '+(p.topSkills||[]).join(', ')+'\nGoals: '+(S.goals||'')+'\n\nROLE: '+title+' at '+company+'\nJD: '+jd+'\n\nReturn this exact JSON structure:\n{\n"fit_score": 78,\n"verdict": "Strong match",\n"summary": "2 sentence honest assessment",\n"matches": ["strength 1","strength 2","strength 3"],\n"gaps": ["gap 1","gap 2"],\n"partial": ["partial 1"],\n"strategy": "2 sentence positioning advice",\n"cv": "Full rewritten CV text. Keep all original bullets, add 1-2 new ones per role marked with ★. Rewrite summary for this role. End with:\\n── TAILORING NOTES ──\\n• change1\\n• change2",\n"cover": "Full cover letter ~250 words. Date, greeting, 3 paragraphs, sign-off. Specific to '+company+' and '+title+'. No placeholder brackets."}',
-      2500,'jd-1'
+      1800,'jd-1'
     );
     const d1=parseJSON(res1,{});
     if(!d1.fit_score)throw new Error('Analysis failed — try again');
@@ -1398,8 +1347,8 @@ async function analyzeJD(){
     await sleep(3000);
     const res2=await claude(
       'You are an expert career coach. Return only valid JSON, no markdown.',
-      'Generate outreach materials for this candidate.\n\nCANDIDATE: '+(p.name||'Candidate')+'\nBackground: '+cv.substring(0,300)+'\n\nAPPLYING TO: '+title+' at '+company+'\n\nReturn this exact JSON:\n{\n"email_to": "recruiting@'+company.toLowerCase().replace(/[^a-z0-9]/g,'')+'.com",\n"email_subject": "short subject under 55 chars",\n"email_body": "cold email ~120 words. 3 paragraphs: who I am + why '+company+', one metric achievement, ask for 15min call. Sign off with '+(p.name||'[Name]')+'.",\n"contacts": [{"name":"realistic full name","title":"title at '+company+'","why":"one sentence","search":"linkedin search keywords"},{"name":"name2","title":"title2","why":"why2","search":"search2"},{"name":"name3","title":"title3","why":"why3","search":"search3"}],\n"linkedin_msg": "LinkedIn connection request max 280 chars. Mention '+company+' and '+title+'. Professional, no emojis."}',
-      1500,'jd-2'
+      'Generate outreach materials for this candidate.\n\nCANDIDATE: '+(p.name||'Candidate')+'\nBackground: '+cv.substring(0,200)+'\n\nAPPLYING TO: '+title+' at '+company+'\n\nReturn this exact JSON:\n{\n"email_to": "recruiting@'+company.toLowerCase().replace(/[^a-z0-9]/g,'')+'.com",\n"email_subject": "short subject under 55 chars",\n"email_body": "cold email ~120 words. 3 paragraphs: who I am + why '+company+', one metric achievement, ask for 15min call. Sign off with '+(p.name||'[Name]')+'.",\n"contacts": [{"name":"realistic full name","title":"title at '+company+'","why":"one sentence","search":"linkedin search keywords"},{"name":"name2","title":"title2","why":"why2","search":"search2"},{"name":"name3","title":"title3","why":"why3","search":"search3"}],\n"linkedin_msg": "LinkedIn connection request max 280 chars. Mention '+company+' and '+title+'. Professional, no emojis."}',
+      1000,'jd-2'
     );
     const d2=parseJSON(res2,{});
     // Store email
