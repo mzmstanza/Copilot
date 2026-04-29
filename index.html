@@ -1342,11 +1342,29 @@ async function analyzeJD(){
     const r2=await claude('Expert career coach. Write clearly.',
       'Rewrite this CV for '+title+' at '+company+'.\nOriginal CV:\n'+cv+'\nStrategy: '+d1.strategy+'\n\nFirst write TAILORED CV (keep all original bullets, add 1-2 marked ★ per role).\nThen write COVER LETTER (~180 words, specific to '+company+').\n\nFormat your response EXACTLY as:\nCV:\n[cv text here]\n\nCOVER LETTER:\n[cover letter here]',
       1000,'jd-materials');
-    // Parse CV and cover letter from plain text response
-    const cvMatch=r2.match(/CV:\n([\s\S]+?)\n\nCOVER LETTER:/i);
-    const coverMatch=r2.match(/COVER LETTER:\n([\s\S]+?)$/i);
-    const cvText=cvMatch?cvMatch[1].trim():r2.substring(0,r2.length/2).trim();
-    const coverText=coverMatch?coverMatch[1].trim():r2.substring(r2.length/2).trim();
+    // Parse CV and cover letter - flexible parsing
+    let cvText='', coverText='';
+    // Try multiple split patterns
+    const splitPatterns=[/COVER LETTER[:\s]*/i, /COVER:/i, /Dear [A-Z]/];
+    let splitIdx=-1;
+    for(const pat of splitPatterns){
+      const m=r2.match(pat);
+      if(m){splitIdx=r2.indexOf(m[0]);break;}
+    }
+    if(splitIdx>100){
+      // Split found - everything before is CV, everything from split is cover
+      const cvRaw=r2.substring(0,splitIdx).trim();
+      // Remove "CV:" prefix if present
+      cvText=cvRaw.replace(/^CV[:\s]*/i,'').trim();
+      coverText=r2.substring(splitIdx).trim();
+    } else {
+      // No clear split - use full response as CV, generate simple cover
+      cvText=r2.replace(/^CV[:\s]*/i,'').trim();
+      coverText='Dear Hiring Team at '+company+',\n\nI am writing to express my interest in the '+title+' position. Based on my background in '+(p.topSkills||['this field'])[0]+', I believe I would be a strong fit for this role.\n\nThank you for your consideration.\n\nBest regards,\n'+name;
+    }
+    // Final cleanup
+    cvText=cvText||r2.trim();
+    coverText=coverText||'';
     S.jd.cvText=cvText;
     document.getElementById('cv-preview').innerHTML=cvHTML(cvText);
     S.jd.coverText=coverText;
