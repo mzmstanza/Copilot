@@ -693,20 +693,27 @@ async function claude(sys,usr,maxTk=2000,tag='?'){
   // Always route through backend (no browser restrictions)
   const backendUrl=S.backendUrl||'https://web-production-d850.up.railway.app';
   let r,d;
-  try{
-    r=await fetch(backendUrl+'/claude',{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({system:clean(sys),user:clean(usr),max_tokens:mt})
-    });
-    d=await r.json();
-  }catch(fetchErr){
-    throw new Error('Network error: '+fetchErr.message);
+  for(let attempt=0;attempt<3;attempt++){
+    try{
+      r=await fetch(backendUrl+'/claude',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({system:clean(sys),user:clean(usr),max_tokens:mt})
+      });
+      d=await r.json();
+    }catch(fetchErr){
+      throw new Error('Network error: '+fetchErr.message);
+    }
+    console.log('[backend:'+tag+'] status='+r.status+' attempt='+attempt);
+    // Retry on rate limit
+    if(r.status===429||(d.detail&&d.detail.includes('rate limit'))){
+      if(attempt<2){await new Promise(res=>setTimeout(res,15000*(attempt+1)));continue;}
+    }
+    if(!r.ok){throw new Error(d.detail||d.error||'Backend error '+r.status);}
+    if(d.text)return d.text;
+    throw new Error('No text in response');
   }
-  console.log('[backend:'+tag+'] status='+r.status);
-  if(!r.ok){throw new Error(d.detail||d.error||'Backend error '+r.status);}
-  if(d.text)return d.text;
-  throw new Error('No text in response');
+  throw new Error('Rate limit exceeded — please wait 1 minute and try again');
 }
 // FIX: robust JSON parser — greedy regex, not lazy
 function parseJSON(text,fallback=null){
@@ -1105,7 +1112,7 @@ async function generateRoleIdeas(role,loc,stage,profile){
   const skills=(p.topSkills||[]).slice(0,4).join(', ');
   const locShort=loc.split('/')[0].trim().split(',')[0].trim();
   const prompt=[
-    'Generate 8 specific job opportunities for this candidate.',
+    'Generate 8 specific job opportunities posted in 2025-2026 that are currently open.',
     '',
     'Profile:',
     '- Role: '+role,
@@ -1376,26 +1383,26 @@ CV:${cv}\nSkills:${(p.topSkills||[]).join(', ')}\nJob:${title} at ${company}\nJD
     S.jd.analysis=gap;renderGapAnalysis(gap);
 
     // 2. Tailored CV
-    await sleep(2000);lTxt.textContent='Tailoring CV (2/5)...';
-    const cvTxt=await claude('Expert career coach. Never use placeholder brackets. Write from actual CV details.',
+    await sleep(8000);lTxt.textContent='Tailoring CV (2/5)...';
+    const cvTxt=await claude('Expert career coach. Rewrite CV for this role. Be specific, no placeholders.',
       `Rewrite CV for "${title}" at ${company}.
 CV:${cv}
-JD:${jdTxt?jdTxt.substring(0,700):'N/A'}
+JD:${jdTxt?jdTxt.substring(0,300):'N/A'}
 Gaps:${(gap.gaps||[]).join(', ')}\nStrategy:${gap.strategy||''}
 Rules:1.Rewrite summary(3 sentences targeting this role) 2.Keep ALL bullets,ADD 1-2 new ones per role marked★ 3.Reorder skills for this role 4.End with:── TAILORING NOTES ──\n• Change1:[what/why]\n• Change2:[what/why]\n• Change3:[what/why]
 Output plain text only.`,'cv-tailor');
     S.jd.cvText=cvTxt;document.getElementById('cv-preview').innerHTML=cvHTML(cvTxt);
 
     // 3. Cover Letter
-    await sleep(2000);lTxt.textContent='Writing cover letter (3/5)...';
+    await sleep(8000);lTxt.textContent='Writing cover letter (3/5)...';
     const covTxt=await claude('Expert career coach. Specific cover letter, no brackets, no placeholder text.',
       `Cover letter for ${p.name||'candidate'} applying to ${title} at ${company}.
-Background:${cv.substring(0,400)}\nGoals:${S.goals||'not specified'}\nStrategy:${gap.strategy||''}\nJD:${jdTxt?jdTxt.substring(0,500):'use general knowledge'}
+Background:${cv.substring(0,400)}\nGoals:${S.goals||'not specified'}\nStrategy:${gap.strategy||''}\nJD:${jdTxt?jdTxt.substring(0,300):'use general knowledge'}
 Format: date, greeting, 3 paragraphs, sign-off. ~280 words. P1:why this co+role. P2:one metric achievement proving fit. P3:why ready now+CTA.`,'cover');
     S.jd.coverText=covTxt;document.getElementById('cover-preview').textContent=covTxt;
 
     // 4. Cold Email
-    await sleep(2000);lTxt.textContent='Drafting cold email (4/5)...';
+    await sleep(8000);lTxt.textContent='Drafting cold email (4/5)...';
     const emailTxt=await claude('Expert career coach. Punchy cold email.',
       `Cold email from ${p.name||'candidate'} to recruiter at ${company} for ${title}.
 Background:${cv.substring(0,400)}
@@ -1414,7 +1421,7 @@ Best,\n${p.name||'[Name]'}`,'email');
     document.getElementById('email-body').value=S.jd.emailBody;
 
     // 5. LinkedIn contacts
-    await sleep(2000);lTxt.textContent='Finding LinkedIn contacts (5/5)...';
+    await sleep(8000);lTxt.textContent='Finding LinkedIn contacts (5/5)...';
     const ctTxt=await claude('Recruiting researcher. Suggest realistic contacts.',
       `${p.name||'Candidate'} applying to ${title} at ${company}. Skills:${(p.topSkills||[]).join(', ')}.
 List 4 contacts (recruiter, hiring manager, peer, senior leader). For EACH:
