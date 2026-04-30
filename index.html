@@ -1294,12 +1294,42 @@ async function analyzeJD(){
   const titleLast = title.split(' ').pop();
 
   try{
-    // ── CALL 1: Analysis + Cover + Email + Outreach (~1200 input tokens) ──
+    // ── CALL 1: Analysis + Cover + Email + Outreach ──
     document.getElementById('jd-loading-txt').textContent = 'Analyzing fit...';
-    const prompt1 = `Candidate:${name},Skills:${skills},Job:${title}@${company},JD:${jdSnippet},CV:${cvSnippet}\nJSON:{"analysis":{"fit_score":75,"verdict":"Good match","summary":"2 sentences","strategy":"2 sentences","matches":["m1","m2"],"partial":["p1"],"gaps":["g1"]},"cover":"Dear Hiring Team at ${company},\\n\\n[120 word letter]\\n\\nSincerely,\\n${name}","email":{"to":"hr@${co}.com","subject":"${title} — ${name}","body":"60-word email"},"outreach":{"targets":[{"role":"Hiring Manager","why":"Approves hire","search":"Hiring Manager ${company}"},{"role":"Recruiter","why":"Owns pipeline","search":"Recruiter ${company}"},{"role":"${titleLast}","why":"Peer insight","search":"${titleLast} ${company}"}],"boolean_search":"\"${company}\" recruiter \"${titleLast}\" site:linkedin.com","connection_message":"Hi, I saw the ${title} role at ${company}. My background in ${(p.topSkills||['this area'])[0]} aligns well — open to a quick chat?"}}`;
+    const prompt1 = [
+      `You are a recruiting expert. Analyze this candidate vs job and return a single JSON object.`,
+      `CANDIDATE: ${name} | Skills: ${skills}`,
+      `JOB: ${title} at ${company}`,
+      `JD EXCERPT: ${jdSnippet}`,
+      `CV EXCERPT: ${cvSnippet}`,
+      ``,
+      `Return this exact JSON structure with ALL fields populated:`,
+      `{`,
+      `  "analysis": {`,
+      `    "fit_score": <integer 50-97>,`,
+      `    "verdict": "<3-5 word verdict>",`,
+      `    "summary": "<2 sentence assessment>",`,
+      `    "strategy": "<2 sentence application strategy>",`,
+      `    "matches": ["<specific skill/exp that matches>", "<another match>", "<another>"],`,
+      `    "partial": ["<skill they have partially>", "<another partial>"],`,
+      `    "gaps": ["<skill they lack>", "<another gap>"]`,
+      `  },`,
+      `  "cover": "Dear Hiring Team at ${company},\\n\\n<120 word cover letter specific to this role>\\n\\nSincerely,\\n${name}",`,
+      `  "email": {"to": "hr@${co}.com", "subject": "${title} — ${name}", "body": "<60 word cold email>"},`,
+      `  "outreach": {`,
+      `    "targets": [`,
+      `      {"role": "Hiring Manager", "why": "Decision maker for this role", "search": "Hiring Manager ${company} ${titleLast}"},`,
+      `      {"role": "Recruiter", "why": "Owns the hiring pipeline", "search": "Recruiter Talent Acquisition ${company}"},`,
+      `      {"role": "${titleLast}", "why": "Peer who can refer internally", "search": "${titleLast} ${company}"}`,
+      `    ],`,
+      `    "boolean_search": "\"${company}\" (\"recruiter\" OR \"talent acquisition\") \"${titleLast}\" site:linkedin.com",`,
+      `    "connection_message": "Hi, I noticed the ${title} opening at ${company}. My background in ${(p.topSkills||['this area'])[0]} aligns with what you're building — would love to connect."`,
+      `  }`,
+      `}`
+    ].join('\n');
 
     const raw1 = await claude(
-      'JSON only. No markdown.',
+      'Return only valid JSON. No markdown, no prose, no explanation.',
       prompt1, 1200, 'jd-1'
     );
 
